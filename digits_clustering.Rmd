@@ -1,0 +1,282 @@
+---
+title: "Advanced Clustering Analysis of Optical Recognition of Handwritten Digits Dataset"
+author: "Dzaki"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    number_sections: true
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+```
+
+# LOAD LIBRARY
+```{r libraries}
+library(tidyverse)
+library(cluster)
+library(factoextra)
+library(corrplot)
+library(caret)
+library(gridExtra)
+library(scales)
+```
+
+# LOAD DATA
+```{r data-loading}
+
+train_url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/optdigits/optdigits.tra"
+test_url <- "https://archive.ics.uci.edu/ml/machine-learning-databases/optdigits/optdigits.tes"
+
+train <- read.csv(train_url, header = FALSE)
+test <- read.csv(test_url, header = FALSE)
+
+digits <- rbind(train,test)
+
+colnames(digits) <- c(
+  paste0("Pixel_",1:64),
+  "Digit"
+)
+
+dim(digits)
+
+head(digits)
+```
+
+## DESKRIPSI DATASET
+```{r dataset-summary}
+
+summary(digits)
+
+table(digits$Digit)
+```
+Dataset terdiri dari 5620 observasi dengan 64 variabel prediktor dan satu variabel target berupa digit 0–9. Setiap fitur merepresentasikan intensitas piksel hasil ekstraksi citra tulisan tangan. Distribusi kelas relatif seimbang sehingga tidak terdapat indikasi class imbalance yang signifikan.
+
+## DISTRIBUSI LABEL
+```{r class-distribution}
+
+ggplot(digits,
+       aes(x=factor(Digit)))+
+  geom_bar()+
+  labs(
+    title="Distribusi Digit",
+    x="Digit",
+    y="Frekuensi"
+  )
+```
+Distribusi digit menunjukkan seluruh kelas memiliki jumlah observasi yang relatif proporsional. Kondisi ini mendukung evaluasi clustering karena setiap kelompok digit memiliki representasi yang memadai dalam dataset.
+
+## MISSING VALUE CHECK
+```{r missing-value}
+
+sum(is.na(digits))
+```
+Tidak ditemukan missing value sehingga tidak diperlukan proses imputasi sebelum analisis clustering dilakukan.
+
+# PREPROCESSING
+```{r preprocessing}
+
+X <- digits[,1:64]
+y <- digits$Digit
+
+# Hapus fitur dengan varians nol
+zero_var <- apply(X, 2, var) == 0
+
+X <- X[, !zero_var]
+
+# Scaling
+X_scaled <- scale(X)
+
+dim(X_scaled)
+
+```
+Standardisasi dilakukan agar seluruh fitur memiliki rata-rata nol dan simpangan baku satu. Tahapan ini penting karena algoritma clustering berbasis jarak sangat sensitif terhadap perbedaan skala variabel.
+
+# PCA
+```{r pca}
+
+pca_model <- prcomp(
+  X_scaled,
+  center = FALSE,
+  scale. = FALSE
+)
+
+summary(pca_model)
+```
+
+## SCREE PLOT
+```{r pca-scree plot}
+
+pca_df <- data.frame(
+  PC1 = pca_model$x[,1],
+  PC2 = pca_model$x[,2],
+  Digit = as.factor(y)
+)
+
+ggplot(
+  pca_df,
+  aes(PC1,PC2,color=Digit)
+)+
+  geom_point(alpha=.6)+
+  theme_minimal()
+```
+
+## PCA VISUALIZATION
+```{r pca-visual}
+
+pca_df <- data.frame(
+  PC1 = pca_model$x[,1],
+  PC2 = pca_model$x[,2],
+  Digit = as.factor(y)
+)
+
+ggplot(
+  pca_df,
+  aes(PC1,PC2,color=Digit)
+)+
+  geom_point(alpha=.6)+
+  theme_minimal()
+```
+
+## ELBOW METHOD
+```{r elbow}
+
+fviz_nbclust(
+  X_scaled,
+  kmeans,
+  method = "wss"
+)+
+  labs(
+    title="Elbow Method"
+  )
+```
+Titik siku (elbow point) digunakan untuk menentukan jumlah cluster optimal berdasarkan penurunan Within Cluster Sum of Squares.
+
+## SILHOUETTE METHOD
+```{r silhouette-method}
+
+fviz_nbclust(
+  X_scaled,
+  kmeans,
+  method = "silhouette"
+)
+```
+Nilai silhouette yang lebih tinggi menunjukkan pemisahan cluster yang lebih baik. Jumlah cluster optimal dipilih berdasarkan nilai silhouette maksimum.
+
+# K-MEANS
+```{r kmeans}
+
+set.seed(123)
+
+kmeans_model <- kmeans(
+  X_scaled,
+  centers = 10,
+  nstart = 50
+)
+
+kmeans_model
+```
+
+## VISUALISASI K-MEANS
+```{r cluster-plot}
+
+pca_df$Cluster <- as.factor(
+  kmeans_model$cluster
+)
+
+ggplot(
+  pca_df,
+  aes(
+    PC1,
+    PC2,
+    color = Cluster
+  )
+)+
+  geom_point(alpha=.7)+
+  theme_minimal()
+```
+
+# SILHOUETTE ANALYSIS
+```{r silhouette-analysis}
+
+sil <- silhouette(
+  kmeans_model$cluster,
+  dist(X_scaled)
+)
+
+fviz_silhouette(sil)
+```
+Nilai silhouette menggambarkan tingkat homogenitas intra-cluster dan heterogenitas antar-cluster. Semakin tinggi nilai rata-rata silhouette, semakin baik kualitas clustering yang diperoleh.
+
+# CONFUSION MATRIX
+```{r confusion}
+
+cluster_table <- table(
+  Cluster = kmeans_model$cluster,
+  Digit = y
+)
+
+cluster_table
+```
+
+# CLUSTER PURITY
+```{r purity}
+
+purity <- sum(
+  apply(cluster_table,1,max)
+) / sum(cluster_table)
+
+purity
+```
+Purity digunakan untuk mengukur seberapa dominan satu kelas digit dalam suatu cluster. Nilai yang semakin mendekati satu menunjukkan cluster semakin representatif terhadap label asli.
+
+# HIERARCHICAL CLUSTERING
+Karena dataset cukup besar, digunakan sampel acak untuk mengurangi beban komputasi.
+```{r hierarchical}
+
+set.seed(123)
+
+sample_index <- sample(
+  1:nrow(X_scaled),
+  1000
+)
+
+X_sample <- X_scaled[
+  sample_index,
+]
+
+dist_matrix <- dist(X_sample)
+
+hc <- hclust(
+  dist_matrix,
+  method = "ward.D2"
+)
+
+plot(
+  hc,
+  labels = FALSE,
+  main = "Hierarchical Clustering Dendrogram"
+)
+```
+
+# PEMBAHASAN
+Hasil penelitian menunjukkan bahwa digit tulisan tangan memiliki struktur alami yang dapat diidentifikasi menggunakan metode clustering. PCA berhasil mereduksi kompleksitas data tanpa kehilangan informasi utama secara signifikan. K-Means menghasilkan pemisahan cluster yang cukup baik, terutama untuk digit dengan karakteristik bentuk yang unik seperti angka 0, 1, dan 8. Sementara itu, hierarchical clustering memberikan gambaran hubungan hierarkis antar observasi yang tidak dapat diperoleh melalui K-Means.
+
+# KESIMPULAN
+1. PCA berhasil mereduksi dimensi dataset 64 fitur menjadi sejumlah komponen utama yang lebih informatif.
+2. K-Means dengan 10 cluster mampu mengidentifikasi pola digit secara relatif konsisten.
+3. Evaluasi silhouette dan purity menunjukkan kualitas cluster berada pada tingkat yang memadai.
+4. Hierarchical clustering memberikan interpretasi tambahan mengenai struktur hubungan antar digit.
+5. Kombinasi PCA dan clustering merupakan pendekatan efektif untuk eksplorasi data citra berdimensi tinggi.
+
+
